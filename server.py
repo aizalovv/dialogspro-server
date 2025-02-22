@@ -1,13 +1,11 @@
 import os
-from flask import Flask, redirect, jsonify, abort
+from flask import Flask, redirect, jsonify, abort, request
 from functools import lru_cache
 import requests
 from dotenv import load_dotenv
 from urllib.parse import urljoin
 
-# Load environment variables
 load_dotenv()
-
 app = Flask(__name__)
 
 # Configuration
@@ -16,39 +14,36 @@ GITHUB_REPO = os.getenv('GITHUB_REPO', 'dialog-templates')
 GITHUB_BRANCH = os.getenv('GITHUB_BRANCH', 'main')
 ALLOWED_DIALOG_TYPES = {'simpleDialog', 'iosDialog', 'customDialog'}
 
-# Cache GitHub API responses for 1 hour
-@app.before_request
+# Cache with 1-hour timeout
 @lru_cache(maxsize=128)
 def get_github_zip_url(dialog_type: str) -> str:
-    """Validate dialog type and build GitHub raw URL"""
-    if dialog_type not in ALLOWED_DIALOG_TYPES:
-        abort(404, description="Dialog type not found")
-    
+    """Build GitHub raw URL with caching"""
     base_url = f"https://raw.githubusercontent.com/{GITHUB_USERNAME}/{GITHUB_REPO}/{GITHUB_BRANCH}/"
     return urljoin(base_url, f"{dialog_type}.zip")
 
 @app.route('/<dialog_type>', methods=['GET'])
 def serve_dialog(dialog_type: str):
-    """Main endpoint to serve dialog ZIP files"""
     try:
-        # Verify dialog type
+        # Step 1: Validate dialog type
         if dialog_type not in ALLOWED_DIALOG_TYPES:
-            abort(404, description="Invalid dialog type")
+            abort(404, description=f"Invalid dialog type: {dialog_type}")
         
-        # Get GitHub URL
+        # Step 2: Get cached URL
         zip_url = get_github_zip_url(dialog_type)
         
-        # Verify file exists on GitHub
+        # Step 3: Verify file exists
         head_resp = requests.head(zip_url)
         if head_resp.status_code != 200:
-            abort(404, description="ZIP file not found on GitHub")
+            abort(404, description="Template file not found on GitHub")
         
-        # Redirect to GitHub raw URL
+        # Step 4: Redirect to GitHub
         return redirect(zip_url, code=302)
     
     except requests.RequestException as e:
-        app.logger.error(f"GitHub connection error: {str(e)}")
-        abort(502, description="Failed to connect to GitHub")
+        app.logger.error(f"GitHub connection failed: {str(e)}")
+        abort(503, description="Service temporarily unavailable")
+
+# Error handlers remain same
 
 @app.errorhandler(404)
 def resource_not_found(e):
